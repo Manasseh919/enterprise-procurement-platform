@@ -7,6 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "echo \"No tests in Stage 1\" && exit 0"
+    "watch:cap": "npm --prefix apps/cap exec -- cds watch",
+    "test": "echo \"No tests in Stage 2\" && exit 0"
   }
 }
