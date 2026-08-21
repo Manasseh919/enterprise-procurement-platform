@@ -7,7 +7,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "watch:cap": "npm --prefix apps/cap exec -- cds watch",
-    "test": "echo \"No tests in Stage 2\" && exit 0"
+    "watch:cap": "npm --prefix apps/cap exec -- cds watch --profile pg",
+    "deploy:cap": "npm --prefix apps/cap exec -- cds deploy --profile pg",
+    "test": "echo \"No tests in Stage 3\" && exit 0"
   }
 }
