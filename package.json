@@ -1,0 +1,12 @@
+{
+  "name": "enterprise-procurement-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Enterprise procurement and system integration platform",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "echo \"No tests in Stage 1\" && exit 0"
+  }
+}
