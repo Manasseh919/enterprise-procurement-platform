@@ -1,0 +1,4 @@
+ID,supplierNumber,name,email,phone,address,country,status,externalSupplierId
+33333333-3333-4333-a333-333333333331,SUP-001,TechSource West Africa,orders@techsource.example,+233-30-200-1001,"15 Independence Ave, Accra",Ghana,ACTIVE,TS-WA-001
+33333333-3333-4333-a333-333333333332,SUP-002,OfficeMart Global,sales@officemart.example,+44-20-7946-0100,"88 Supply Road, London",United Kingdom,ACTIVE,OM-EU-002
+33333333-3333-4333-a333-333333333333,SUP-003,Industrial Parts Ltd,support@indparts.example,+49-69-900-2000,"12 Hafenstrasse, Frankfurt",Germany,ACTIVE,IP-DE-003
