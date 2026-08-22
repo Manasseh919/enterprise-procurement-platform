@@ -22,6 +22,12 @@ type EmployeeRow = {
   role: string
 }
 
+type ApprovalRow = {
+  ID: string
+  status: string
+  comment?: string | null
+}
+
 function httpError(status: number, message: string): never {
   throw Object.assign(new Error(message), { status, code: String(status) })
 }
@@ -62,25 +68,55 @@ function boundId(req: Request): string {
 }
 
 function assertCanSubmit(req: Request): void {
-  const user = req.user
-  if (!user || user.is('anonymous')) return
-  if (user.is('ADMIN') || user.is('EMPLOYEE') || user.is('authenticated-user')) return
-  httpError(403, 'Not authorized to submit purchase requests')
+    const user = req.user
+    if (!user || user.id === 'anonymous' || user._is_anonymous) return
+    if (user.is('ADMIN') || user.is('admin') || user.is('EMPLOYEE') || user.is('employee')) return
+    if (user.is('authenticated-user') || user.is('any')) return
+    httpError(403, 'Not authorized to submit purchase requests')
+  }
+
+  function assertCanApprove(req: Request): void {
+    const user = req.user
+    if (!user || user.id === 'anonymous' || user._is_anonymous) return
+    if (user.is('ADMIN') || user.is('admin') || user.is('MANAGER') || user.is('manager')) return
+    if (user.is('authenticated-user') || user.is('any')) return
+    httpError(403, 'Not authorized to approve or reject purchase requests')
+  }
+
+function wrapAction(
+  handler: (req: Request) => Promise<unknown>,
+  fallbackMessage: string
+) {
+  return async (req: Request) => {
+    try {
+      return await handler(req)
+    } catch (err) {
+      const status = (err as { status?: number }).status
+      if (status) throw err
+      httpError(500, err instanceof Error ? err.message : fallbackMessage)
+    }
+  }
 }
 
 export default class ProcurementService extends cds.ApplicationService {
   override async init() {
     const { PurchaseRequests } = this.entities
 
-    this.on('submitPurchaseRequest', PurchaseRequests, async (req) => {
-      try {
-        return await this.submitPurchaseRequest(req)
-      } catch (err) {
-        const status = (err as { status?: number }).status
-        if (status) throw err
-        httpError(500, err instanceof Error ? err.message : 'Submit failed')
-      }
-    })
+    this.on(
+      'submitPurchaseRequest',
+      PurchaseRequests,
+      wrapAction((req) => this.submitPurchaseRequest(req), 'Submit failed')
+    )
+    this.on(
+      'approvePurchaseRequest',
+      PurchaseRequests,
+      wrapAction((req) => this.decidePurchaseRequest(req, 'APPROVED'), 'Approve failed')
+    )
+    this.on(
+      'rejectPurchaseRequest',
+      PurchaseRequests,
+      wrapAction((req) => this.decidePurchaseRequest(req, 'REJECTED'), 'Reject failed')
+    )
 
     await super.init()
   }
@@ -169,6 +205,73 @@ export default class ProcurementService extends cds.ApplicationService {
       currency: request.currency ?? 'USD',
       submittedAt,
       approverEmail: approver.email
+    }
+  }
+
+  private async decidePurchaseRequest(
+    req: Request,
+    decision: 'APPROVED' | 'REJECTED'
+  ) {
+    assertCanApprove(req)
+
+    const { PurchaseRequests, Approvals } = this.entities
+    const ID = boundId(req)
+    const comment = String(
+      (req.data as { comment?: string } | undefined)?.comment ?? ''
+    ).trim()
+
+    if (decision === 'REJECTED' && !comment) {
+      httpError(400, 'A rejection comment is required')
+    }
+
+    const request = (await SELECT.one
+      .from(PurchaseRequests)
+      .where({ ID })) as PurchaseRequestRow | null
+
+    if (!request) {
+      httpError(404, 'Purchase request not found')
+    }
+
+    if (request.status !== 'PENDING_APPROVAL') {
+      httpError(
+        400,
+        `Purchase request ${request.requestNumber} cannot be ${decision.toLowerCase()} from status ${request.status}`
+      )
+    }
+
+    const approval = (await SELECT.one.from(Approvals).where({
+      purchaseRequest_ID: request.ID,
+      status: 'PENDING'
+    })) as ApprovalRow | null
+
+    if (!approval) {
+      httpError(400, 'No pending approval exists for this purchase request')
+    }
+
+    const decidedAt = new Date().toISOString()
+
+    await UPDATE(Approvals)
+      .set({
+        status: decision,
+        comment: decision === 'REJECTED' ? comment : approval.comment ?? comment,
+        approvedAt: decidedAt
+      })
+      .where({ ID: approval.ID })
+
+    await UPDATE(PurchaseRequests)
+      .set(
+        decision === 'APPROVED'
+          ? { status: 'APPROVED', approvedAt: decidedAt }
+          : { status: 'REJECTED', rejectedAt: decidedAt }
+      )
+      .where({ ID: request.ID })
+
+    return {
+      ID: request.ID,
+      requestNumber: request.requestNumber,
+      status: decision,
+      comment: decision === 'REJECTED' ? comment : approval.comment ?? comment,
+      decidedAt
     }
   }
 

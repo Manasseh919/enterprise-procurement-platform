@@ -13,12 +13,22 @@ service ProcurementService {
     approverEmail : String;
   }
 
+  type ApprovalDecisionResponse {
+    ID            : UUID;
+    requestNumber : String(32);
+    status        : String;
+    comment       : String;
+    decidedAt     : Timestamp;
+  }
+
   entity Departments           as projection on db.Departments;
   entity Employees             as projection on db.Employees;
   entity Suppliers             as projection on db.Suppliers;
 
   entity PurchaseRequests      as projection on db.PurchaseRequests actions {
     action submitPurchaseRequest() returns SubmitPurchaseRequestResponse;
+    action approvePurchaseRequest() returns ApprovalDecisionResponse;
+    action rejectPurchaseRequest(comment : String) returns ApprovalDecisionResponse;
   };
 
   entity PurchaseRequestItems  as projection on db.PurchaseRequestItems;

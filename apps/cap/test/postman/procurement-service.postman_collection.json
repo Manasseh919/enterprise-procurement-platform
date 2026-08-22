@@ -215,6 +215,127 @@
           }
         }
       ]
+    },
+    {
+      "name": "Approval workflow",
+      "item": [
+        {
+          "name": "Approve PR-2026-000001",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{draftRequestId}})/approvePurchaseRequest",
+            "description": "Use after the request is PENDING_APPROVAL. Expected 200, status APPROVED."
+          }
+        },
+        {
+          "name": "Approve same request again (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{draftRequestId}})/approvePurchaseRequest",
+            "description": "Expected 400. Already APPROVED."
+          }
+        },
+        {
+          "name": "Reject PR-2026-000002 without comment (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{pendingRequestId}})/rejectPurchaseRequest",
+            "description": "Expected 400. A rejection comment is required."
+          }
+        },
+        {
+          "name": "Reject PR-2026-000002",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comment\": \"Quantity is higher than the current headcount plan.\"\n}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{pendingRequestId}})/rejectPurchaseRequest",
+            "description": "Expected 200, status REJECTED, comment returned."
+          }
+        },
+        {
+          "name": "Approve already approved request (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{approvedRequestId}})/approvePurchaseRequest",
+            "description": "Expected 400. PR-2026-000003 is already APPROVED."
+          }
+        },
+        {
+          "name": "Approve already rejected request (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{rejectedRequestId}})/approvePurchaseRequest",
+            "description": "Expected 400. REJECTED cannot become APPROVED without a resubmission process."
+          }
+        },
+        {
+          "name": "Get PR-2026-000001 with approvals",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{draftRequestId}})?$expand=approvals"
+          }
+        }
+      ]
     }
   ]
 }
