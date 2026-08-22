@@ -21,6 +21,16 @@ service ProcurementService {
     decidedAt     : Timestamp;
   }
 
+  type CreatePurchaseOrderResponse {
+    ID                  : UUID;
+    purchaseOrderNumber : String(32);
+    purchaseRequestID   : UUID;
+    supplierID          : UUID;
+    status              : String;
+    totalAmount         : Decimal(15, 2);
+    currency            : String(3);
+  }
+
   entity Departments           as projection on db.Departments;
   entity Employees             as projection on db.Employees;
   entity Suppliers             as projection on db.Suppliers;
@@ -29,6 +39,7 @@ service ProcurementService {
     action submitPurchaseRequest() returns SubmitPurchaseRequestResponse;
     action approvePurchaseRequest() returns ApprovalDecisionResponse;
     action rejectPurchaseRequest(comment : String) returns ApprovalDecisionResponse;
+    action createPurchaseOrder(supplier_ID : UUID) returns CreatePurchaseOrderResponse;
   };
 
   entity PurchaseRequestItems  as projection on db.PurchaseRequestItems;
