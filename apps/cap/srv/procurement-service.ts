@@ -1,5 +1,35 @@
 import cds from "@sap/cds";
 import type { Request } from "@sap/cds";
+import { sendAccountingInvoice } from "./integrations/accounting-integration.js";
+import { integrationConfig } from "./integrations/config.js";
+import {
+  sendErpGoodsReceipt,
+  sendErpPurchaseOrder,
+} from "./integrations/erp-integration.js";
+import {
+  confirmSupplierOrder,
+  sendSupplierOrder,
+} from "./integrations/supplier-integration.js";
+import {
+  findSuccessMessage,
+  getIntegrationMessage,
+  maxAttemptsReached,
+  MESSAGE_TYPES,
+  parseJson,
+  runOutbound,
+} from "./integrations/tracker.js";
+import type {
+  AccountingInvoiceResponse,
+  ConfirmPurchaseOrderPayload,
+  ErpGoodsReceiptResponse,
+  ErpPurchaseOrderResponse,
+  IntegrationMessageRow,
+  OrderItemPayload,
+  ReceiveGoodsPayload,
+  SendInvoicePayload,
+  SendPurchaseOrderPayload,
+  SupplierOrderResponse,
+} from "./integrations/types.js";
 
 type PurchaseRequestRow = {
   ID: string;
@@ -39,6 +69,26 @@ type SupplierRow = {
 type PurchaseOrderRow = {
   ID: string;
   purchaseOrderNumber: string;
+  status: string;
+  totalAmount?: number;
+  currency?: string;
+  supplier_ID?: string;
+  externalOrderId?: string | null;
+};
+
+type PurchaseOrderItemRow = {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+};
+
+type InvoiceRow = {
+  ID: string;
+  invoiceNumber: string;
+  status: string;
+  amount?: number;
+  currency?: string;
+  externalInvoiceId?: string | null;
 };
 
 function httpError(status: number, message: string): never {
@@ -57,15 +107,21 @@ function idFromUnknown(value: unknown): string | undefined {
   }
 }
 
-function idFromUrl(url: string | undefined): string | undefined {
+function idFromUrl(
+  url: string | undefined,
+  entityName: string,
+): string | undefined {
   if (!url) return;
   const match = decodeURIComponent(url).match(
-    /PurchaseRequests\((?:ID=)?(?:"|')?([0-9a-fA-F-]{36})/i,
+    new RegExp(
+      `${entityName}\\((?:ID=)?(?:"|')?([0-9a-fA-F-]{36})`,
+      "i",
+    ),
   );
   return match?.[1];
 }
 
-function boundId(req: Request): string {
+function boundId(req: Request, entityName = "PurchaseRequests"): string {
   const fromParams = idFromUnknown(
     Array.isArray(req.params) ? req.params[0] : req.params,
   );
@@ -74,52 +130,124 @@ function boundId(req: Request): string {
   const httpReq = cds.context?.http?.req as
     | { originalUrl?: string; url?: string }
     | undefined;
-  const fromUrl = idFromUrl(httpReq?.originalUrl || httpReq?.url);
+  const fromUrl = idFromUrl(
+    httpReq?.originalUrl || httpReq?.url,
+    entityName,
+  );
   if (fromUrl) return fromUrl;
 
-  httpError(400, "Purchase request ID is required");
+  httpError(400, `${entityName} ID is required`);
+}
+
+function isAnonymous(req: Request): boolean {
+    const user = req.user as
+      | { id?: string; _is_anonymous?: boolean }
+      | undefined;
+    return !user || user.id === "anonymous" || Boolean(user._is_anonymous);
+  }
+
+function hasAnyRole(req: Request, roles: string[]): boolean {
+  const user = req.user;
+  if (!user) return false;
+  return roles.some((role) => user.is(role));
 }
 
 function assertCanSubmit(req: Request): void {
-  const user = req.user;
-  if (!user || user.id === "anonymous" || user._is_anonymous) return;
+  if (isAnonymous(req)) return;
   if (
-    user.is("ADMIN") ||
-    user.is("admin") ||
-    user.is("EMPLOYEE") ||
-    user.is("employee")
+    hasAnyRole(req, [
+      "ADMIN",
+      "admin",
+      "EMPLOYEE",
+      "employee",
+      "authenticated-user",
+      "any",
+    ])
   )
     return;
-  if (user.is("authenticated-user") || user.is("any")) return;
   httpError(403, "Not authorized to submit purchase requests");
 }
 
 function assertCanApprove(req: Request): void {
-  const user = req.user;
-  if (!user || user.id === "anonymous" || user._is_anonymous) return;
+  if (isAnonymous(req)) return;
   if (
-    user.is("ADMIN") ||
-    user.is("admin") ||
-    user.is("MANAGER") ||
-    user.is("manager")
+    hasAnyRole(req, [
+      "ADMIN",
+      "admin",
+      "MANAGER",
+      "manager",
+      "authenticated-user",
+      "any",
+    ])
   )
     return;
-  if (user.is("authenticated-user") || user.is("any")) return;
   httpError(403, "Not authorized to approve or reject purchase requests");
 }
 
 function assertCanCreatePurchaseOrder(req: Request): void {
-  const user = req.user;
-  if (!user || user.id === "anonymous" || user._is_anonymous) return;
+  if (isAnonymous(req)) return;
   if (
-    user.is("ADMIN") ||
-    user.is("admin") ||
-    user.is("PROCUREMENT") ||
-    user.is("procurement")
+    hasAnyRole(req, [
+      "ADMIN",
+      "admin",
+      "PROCUREMENT",
+      "procurement",
+      "authenticated-user",
+      "any",
+    ])
   )
     return;
-  if (user.is("authenticated-user") || user.is("any")) return;
   httpError(403, "Not authorized to create purchase orders");
+}
+
+function assertCanSendPurchaseOrder(req: Request): void {
+  if (isAnonymous(req)) return;
+  if (
+    hasAnyRole(req, [
+      "ADMIN",
+      "admin",
+      "PROCUREMENT",
+      "procurement",
+      "authenticated-user",
+      "any",
+    ])
+  )
+    return;
+  httpError(403, "Not authorized to send purchase orders");
+}
+
+function assertCanReceiveInvoice(req: Request): void {
+  if (isAnonymous(req)) return;
+  if (
+    hasAnyRole(req, [
+      "ADMIN",
+      "admin",
+      "FINANCE",
+      "finance",
+      "PROCUREMENT",
+      "procurement",
+      "authenticated-user",
+      "any",
+    ])
+  )
+    return;
+  httpError(403, "Not authorized to receive invoices");
+}
+
+function assertCanRetry(req: Request): void {
+  if (isAnonymous(req)) return;
+  if (
+    hasAnyRole(req, [
+      "ADMIN",
+      "admin",
+      "PROCUREMENT",
+      "procurement",
+      "authenticated-user",
+      "any",
+    ])
+  )
+    return;
+  httpError(403, "Not authorized to retry integration messages");
 }
 
 function wrapAction(
@@ -157,9 +285,20 @@ function actionParam(req: Request, names: string[]): string {
   return "";
 }
 
+function callResult(
+  messageId: string,
+  status: string,
+  externalId = "",
+  errorMessage = "",
+  skipped = false,
+) {
+  return { messageId, status, externalId, errorMessage, skipped };
+}
+
 export default class ProcurementService extends cds.ApplicationService {
   override async init() {
-    const { PurchaseRequests } = this.entities;
+    const { PurchaseRequests, PurchaseOrders, IntegrationMessages } =
+      this.entities;
 
     this.on(
       "submitPurchaseRequest",
@@ -188,6 +327,40 @@ export default class ProcurementService extends cds.ApplicationService {
       wrapAction(
         (req) => this.createPurchaseOrder(req),
         "Create purchase order failed",
+      ),
+    );
+    this.on(
+      "sendPurchaseOrder",
+      PurchaseOrders,
+      wrapAction(
+        (req) => this.sendPurchaseOrder(req),
+        "Send purchase order failed",
+      ),
+    );
+    this.on(
+      "confirmPurchaseOrder",
+      PurchaseOrders,
+      wrapAction(
+        (req) => this.confirmPurchaseOrder(req),
+        "Confirm purchase order failed",
+      ),
+    );
+    this.on(
+      "receiveGoods",
+      PurchaseOrders,
+      wrapAction((req) => this.receiveGoods(req), "Receive goods failed"),
+    );
+    this.on(
+      "receiveInvoice",
+      PurchaseOrders,
+      wrapAction((req) => this.receiveInvoice(req), "Receive invoice failed"),
+    );
+    this.on(
+      "retryIntegrationMessage",
+      IntegrationMessages,
+      wrapAction(
+        (req) => this.retryIntegrationMessage(req),
+        "Retry integration message failed",
       ),
     );
 
@@ -478,20 +651,623 @@ export default class ProcurementService extends cds.ApplicationService {
     };
   }
 
+  private async sendPurchaseOrder(req: Request) {
+    assertCanSendPurchaseOrder(req);
+
+    const purchaseOrder = await this.loadPurchaseOrder(
+      boundId(req, "PurchaseOrders"),
+    );
+    const payload = await this.sendPayload(purchaseOrder);
+
+    if (!["CREATED", "SENT"].includes(purchaseOrder.status)) {
+      httpError(
+        400,
+        `Purchase order ${purchaseOrder.purchaseOrderNumber} cannot be sent from status ${purchaseOrder.status}`,
+      );
+    }
+
+    const supplierExisting = await findSuccessMessage(
+      purchaseOrder.ID,
+      MESSAGE_TYPES.SEND_PURCHASE_ORDER_SUPPLIER,
+    );
+    const erpExisting = await findSuccessMessage(
+      purchaseOrder.ID,
+      MESSAGE_TYPES.SEND_PURCHASE_ORDER_ERP,
+    );
+
+    if (supplierExisting && erpExisting) {
+      httpError(
+        400,
+        `Purchase order ${purchaseOrder.purchaseOrderNumber} was already sent to supplier and ERP`,
+      );
+    }
+
+    const supplier = supplierExisting
+      ? callResult(
+          supplierExisting.messageId,
+          "SUCCESS",
+          parseJson<SupplierOrderResponse>(supplierExisting.responsePayload)
+            ?.externalOrderId ??
+            purchaseOrder.externalOrderId ??
+            "",
+          "",
+          true,
+        )
+      : await this.dispatchSupplierSend(purchaseOrder, payload);
+
+    const erp = erpExisting
+      ? callResult(
+          erpExisting.messageId,
+          "SUCCESS",
+          parseJson<ErpPurchaseOrderResponse>(erpExisting.responsePayload)
+            ?.erpPurchaseOrderId ?? "",
+          "",
+          true,
+        )
+      : await this.dispatchErpSend(purchaseOrder, payload);
+
+    const updated = await this.loadPurchaseOrder(purchaseOrder.ID);
+
+    return {
+      ID: updated.ID,
+      purchaseOrderNumber: updated.purchaseOrderNumber,
+      status: updated.status,
+      externalOrderId: updated.externalOrderId ?? "",
+      supplier,
+      erp,
+    };
+  }
+
+  private async confirmPurchaseOrder(req: Request) {
+    assertCanSendPurchaseOrder(req);
+
+    const purchaseOrder = await this.loadPurchaseOrder(
+      boundId(req, "PurchaseOrders"),
+    );
+
+    if (!["SENT", "CONFIRMED"].includes(purchaseOrder.status)) {
+      httpError(
+        400,
+        `Purchase order ${purchaseOrder.purchaseOrderNumber} cannot be confirmed from status ${purchaseOrder.status}`,
+      );
+    }
+
+    if (!purchaseOrder.externalOrderId) {
+      httpError(
+        400,
+        `Purchase order ${purchaseOrder.purchaseOrderNumber} has not been sent to the supplier`,
+      );
+    }
+
+    const payload: ConfirmPurchaseOrderPayload = {
+      purchaseOrderId: purchaseOrder.ID,
+      externalOrderId: purchaseOrder.externalOrderId,
+    };
+
+    const outbound = await runOutbound<SupplierOrderResponse>({
+      messageType: MESSAGE_TYPES.CONFIRM_PURCHASE_ORDER_SUPPLIER,
+      destinationSystem: "SUPPLIER",
+      businessEntityType: "PurchaseOrder",
+      businessEntityId: purchaseOrder.ID,
+      payload,
+      send: () => confirmSupplierOrder(payload.externalOrderId),
+    });
+
+    let confirmedAt = "";
+    if (outbound.status === "SUCCESS") {
+      confirmedAt = outbound.result?.confirmedAt || new Date().toISOString();
+      await UPDATE(this.entities.PurchaseOrders)
+        .set({
+          status: "CONFIRMED",
+          confirmedAt,
+        })
+        .where({ ID: purchaseOrder.ID });
+    }
+
+    const updated = await this.loadPurchaseOrder(purchaseOrder.ID);
+
+    return {
+      ID: updated.ID,
+      purchaseOrderNumber: updated.purchaseOrderNumber,
+      status: updated.status,
+      externalOrderId: updated.externalOrderId ?? "",
+      confirmedAt,
+      integration: callResult(
+        outbound.messageId,
+        outbound.status,
+        outbound.result?.externalOrderId ?? updated.externalOrderId ?? "",
+        outbound.errorMessage ?? "",
+      ),
+    };
+  }
+
+  private async receiveGoods(req: Request) {
+    assertCanSendPurchaseOrder(req);
+
+    const purchaseOrder = await this.loadPurchaseOrder(
+      boundId(req, "PurchaseOrders"),
+    );
+    const quantityReceived = Number(
+      actionParam(req, ["quantityReceived", "quantity"]),
+    );
+    const notes = actionParam(req, ["notes"]);
+
+    if (!["SENT", "CONFIRMED", "PARTIALLY_RECEIVED"].includes(purchaseOrder.status)) {
+      httpError(
+        400,
+        `Goods cannot be received for purchase order ${purchaseOrder.purchaseOrderNumber} in status ${purchaseOrder.status}`,
+      );
+    }
+
+    if (!Number.isFinite(quantityReceived) || quantityReceived <= 0) {
+      httpError(400, "quantityReceived must be greater than zero");
+    }
+
+    const erpSend = await findSuccessMessage(
+      purchaseOrder.ID,
+      MESSAGE_TYPES.SEND_PURCHASE_ORDER_ERP,
+    );
+    const erpPurchaseOrderId = parseJson<ErpPurchaseOrderResponse>(
+      erpSend?.responsePayload,
+    )?.erpPurchaseOrderId;
+
+    if (!erpPurchaseOrderId) {
+      httpError(
+        400,
+        `Purchase order ${purchaseOrder.purchaseOrderNumber} has not been sent to ERP`,
+      );
+    }
+
+    const payload: ReceiveGoodsPayload = {
+      purchaseOrderId: purchaseOrder.ID,
+      erpPurchaseOrderId,
+      quantityReceived,
+      notes: notes || undefined,
+    };
+
+    const outbound = await runOutbound<ErpGoodsReceiptResponse>({
+      messageType: MESSAGE_TYPES.RECEIVE_GOODS_ERP,
+      destinationSystem: "ERP",
+      businessEntityType: "PurchaseOrder",
+      businessEntityId: purchaseOrder.ID,
+      payload,
+      send: () => sendErpGoodsReceipt(payload),
+    });
+
+    let goodsReceiptNumber = "";
+    if (outbound.status === "SUCCESS" && outbound.result) {
+      goodsReceiptNumber = await this.nextDocumentNumber(
+        this.entities.GoodsReceipts,
+        "goodsReceiptNumber",
+        `GR-${new Date().getFullYear()}-`,
+      );
+      const poStatus =
+        outbound.result.purchaseOrderStatus === "RECEIVED"
+          ? "RECEIVED"
+          : "PARTIALLY_RECEIVED";
+
+      await INSERT.into(this.entities.GoodsReceipts).entries({
+        goodsReceiptNumber,
+        purchaseOrder_ID: purchaseOrder.ID,
+        receivedDate: new Date().toISOString().slice(0, 10),
+        status: poStatus === "RECEIVED" ? "COMPLETE" : "PARTIAL",
+        notes: notes || undefined,
+      });
+
+      await UPDATE(this.entities.PurchaseOrders)
+        .set({ status: poStatus })
+        .where({ ID: purchaseOrder.ID });
+    }
+
+    const updated = await this.loadPurchaseOrder(purchaseOrder.ID);
+
+    return {
+      ID: updated.ID,
+      purchaseOrderNumber: updated.purchaseOrderNumber,
+      status: updated.status,
+      goodsReceiptNumber,
+      quantityReceived,
+      integration: callResult(
+        outbound.messageId,
+        outbound.status,
+        outbound.result?.goodsReceiptId ?? "",
+        outbound.errorMessage ?? "",
+      ),
+    };
+  }
+
+  private async receiveInvoice(req: Request) {
+    assertCanReceiveInvoice(req);
+
+    const { PurchaseOrders, Invoices, Suppliers } = this.entities;
+    const purchaseOrder = await this.loadPurchaseOrder(
+      boundId(req, "PurchaseOrders"),
+    );
+
+    if (["DRAFT", "CREATED", "CANCELLED"].includes(purchaseOrder.status)) {
+      httpError(
+        400,
+        `Invoice cannot be received for purchase order ${purchaseOrder.purchaseOrderNumber} in status ${purchaseOrder.status}`,
+      );
+    }
+
+    const existingInvoice = (await SELECT.one.from(Invoices).where({
+      purchaseOrder_ID: purchaseOrder.ID,
+    })) as InvoiceRow | null;
+
+    if (existingInvoice) {
+      httpError(
+        400,
+        `Purchase order ${purchaseOrder.purchaseOrderNumber} already has invoice ${existingInvoice.invoiceNumber}`,
+      );
+    }
+
+    const supplier = (await SELECT.one
+      .from(Suppliers)
+      .where({ ID: purchaseOrder.supplier_ID })) as SupplierRow | null;
+
+    if (!supplier) {
+      httpError(404, "Supplier not found");
+    }
+
+    const invoiceNumber = await this.nextDocumentNumber(
+      Invoices,
+      "invoiceNumber",
+      `INV-${new Date().getFullYear()}-`,
+    );
+    const amount = asMoney(Number(purchaseOrder.totalAmount || 0));
+    const currency = purchaseOrder.currency ?? "USD";
+    const receivedAt = new Date().toISOString();
+
+    await INSERT.into(Invoices).entries({
+      invoiceNumber,
+      purchaseOrder_ID: purchaseOrder.ID,
+      supplier_ID: supplier.ID,
+      amount,
+      currency,
+      status: "RECEIVED",
+      invoiceDate: receivedAt.slice(0, 10),
+      receivedAt,
+    });
+
+    const invoice = (await SELECT.one
+      .from(Invoices)
+      .where({ invoiceNumber })) as InvoiceRow | null;
+
+    if (!invoice) {
+      httpError(500, "Invoice was not created");
+    }
+
+    const payload: SendInvoicePayload = {
+      invoiceId: invoice.ID,
+      invoiceNumber,
+      purchaseOrderNumber: purchaseOrder.purchaseOrderNumber,
+      supplierId: supplier.supplierNumber,
+      amount,
+      currency,
+    };
+
+    const outbound = await runOutbound<AccountingInvoiceResponse>({
+      messageType: MESSAGE_TYPES.SEND_INVOICE_ACCOUNTING,
+      destinationSystem: "ACCOUNTING",
+      businessEntityType: "Invoice",
+      businessEntityId: invoice.ID,
+      payload,
+      send: () => sendAccountingInvoice(payload),
+    });
+
+    if (outbound.status === "SUCCESS" && outbound.result?.externalInvoiceId) {
+      await UPDATE(Invoices)
+        .set({ externalInvoiceId: outbound.result.externalInvoiceId })
+        .where({ ID: invoice.ID });
+    }
+
+    const updated = (await SELECT.one
+      .from(Invoices)
+      .where({ ID: invoice.ID })) as InvoiceRow;
+
+    return {
+      ID: updated.ID,
+      invoiceNumber: updated.invoiceNumber,
+      purchaseOrderID: purchaseOrder.ID,
+      status: updated.status,
+      amount,
+      externalInvoiceId: updated.externalInvoiceId ?? "",
+      integration: callResult(
+        outbound.messageId,
+        outbound.status,
+        outbound.result?.externalInvoiceId ?? "",
+        outbound.errorMessage ?? "",
+      ),
+    };
+  }
+
+  private async retryIntegrationMessage(req: Request) {
+    assertCanRetry(req);
+
+    const message = await getIntegrationMessage(
+      boundId(req, "IntegrationMessages"),
+    );
+
+    if (!message) {
+      httpError(404, "Integration message not found");
+    }
+
+    if (!["FAILED", "RETRYING"].includes(message.status)) {
+      httpError(
+        400,
+        `Integration message ${message.messageId} cannot be retried from status ${message.status}`,
+      );
+    }
+
+    if (maxAttemptsReached(message.attempts)) {
+      httpError(
+        400,
+        `Integration message ${message.messageId} has reached the maximum of ${integrationConfig().maxAttempts} attempts`,
+      );
+    }
+
+    const outbound = await this.replayMessage(message);
+    const updated = await getIntegrationMessage(message.ID);
+
+    return {
+      ID: message.ID,
+      messageId: message.messageId,
+      messageType: message.messageType,
+      status: updated?.status ?? outbound.status,
+      attempts: updated?.attempts ?? outbound.attempts,
+      errorMessage: updated?.errorMessage ?? outbound.errorMessage ?? "",
+      responsePayload: updated?.responsePayload ?? outbound.responsePayload ?? "",
+    };
+  }
+
+  private async replayMessage(message: IntegrationMessageRow) {
+    switch (message.messageType) {
+      case MESSAGE_TYPES.SEND_PURCHASE_ORDER_SUPPLIER: {
+        const payload = parseJson<SendPurchaseOrderPayload>(message.payload);
+        if (!payload) httpError(400, "Stored supplier payload is invalid");
+        const outbound = await runOutbound<SupplierOrderResponse>({
+          existing: message,
+          messageType: message.messageType,
+          destinationSystem: "SUPPLIER",
+          businessEntityType: "PurchaseOrder",
+          businessEntityId: payload.purchaseOrderId,
+          payload,
+          send: () => sendSupplierOrder(payload),
+        });
+        if (outbound.status === "SUCCESS") {
+          await this.applySupplierSendSuccess(
+            payload.purchaseOrderId,
+            outbound.result,
+          );
+        }
+        return outbound;
+      }
+      case MESSAGE_TYPES.SEND_PURCHASE_ORDER_ERP: {
+        const payload = parseJson<SendPurchaseOrderPayload>(message.payload);
+        if (!payload) httpError(400, "Stored ERP payload is invalid");
+        return runOutbound<ErpPurchaseOrderResponse>({
+          existing: message,
+          messageType: message.messageType,
+          destinationSystem: "ERP",
+          businessEntityType: "PurchaseOrder",
+          businessEntityId: payload.purchaseOrderId,
+          payload,
+          send: () => sendErpPurchaseOrder(payload),
+        });
+      }
+      case MESSAGE_TYPES.CONFIRM_PURCHASE_ORDER_SUPPLIER: {
+        const payload = parseJson<ConfirmPurchaseOrderPayload>(message.payload);
+        if (!payload) httpError(400, "Stored confirm payload is invalid");
+        const outbound = await runOutbound<SupplierOrderResponse>({
+          existing: message,
+          messageType: message.messageType,
+          destinationSystem: "SUPPLIER",
+          businessEntityType: "PurchaseOrder",
+          businessEntityId: payload.purchaseOrderId,
+          payload,
+          send: () => confirmSupplierOrder(payload.externalOrderId),
+        });
+        if (outbound.status === "SUCCESS") {
+          await UPDATE(this.entities.PurchaseOrders)
+            .set({
+              status: "CONFIRMED",
+              confirmedAt:
+                outbound.result?.confirmedAt || new Date().toISOString(),
+            })
+            .where({ ID: payload.purchaseOrderId });
+        }
+        return outbound;
+      }
+      case MESSAGE_TYPES.RECEIVE_GOODS_ERP: {
+        const payload = parseJson<ReceiveGoodsPayload>(message.payload);
+        if (!payload) httpError(400, "Stored goods-receipt payload is invalid");
+        const outbound = await runOutbound<ErpGoodsReceiptResponse>({
+          existing: message,
+          messageType: message.messageType,
+          destinationSystem: "ERP",
+          businessEntityType: "PurchaseOrder",
+          businessEntityId: payload.purchaseOrderId,
+          payload,
+          send: () => sendErpGoodsReceipt(payload),
+        });
+        if (outbound.status === "SUCCESS" && outbound.result) {
+          const goodsReceiptNumber = await this.nextDocumentNumber(
+            this.entities.GoodsReceipts,
+            "goodsReceiptNumber",
+            `GR-${new Date().getFullYear()}-`,
+          );
+          const poStatus =
+            outbound.result.purchaseOrderStatus === "RECEIVED"
+              ? "RECEIVED"
+              : "PARTIALLY_RECEIVED";
+          await INSERT.into(this.entities.GoodsReceipts).entries({
+            goodsReceiptNumber,
+            purchaseOrder_ID: payload.purchaseOrderId,
+            receivedDate: new Date().toISOString().slice(0, 10),
+            status: poStatus === "RECEIVED" ? "COMPLETE" : "PARTIAL",
+            notes: payload.notes,
+          });
+          await UPDATE(this.entities.PurchaseOrders)
+            .set({ status: poStatus })
+            .where({ ID: payload.purchaseOrderId });
+        }
+        return outbound;
+      }
+      case MESSAGE_TYPES.SEND_INVOICE_ACCOUNTING: {
+        const payload = parseJson<SendInvoicePayload>(message.payload);
+        if (!payload) httpError(400, "Stored invoice payload is invalid");
+        const outbound = await runOutbound<AccountingInvoiceResponse>({
+          existing: message,
+          messageType: message.messageType,
+          destinationSystem: "ACCOUNTING",
+          businessEntityType: "Invoice",
+          businessEntityId: payload.invoiceId,
+          payload,
+          send: () => sendAccountingInvoice(payload),
+        });
+        if (outbound.status === "SUCCESS" && outbound.result?.externalInvoiceId) {
+          await UPDATE(this.entities.Invoices)
+            .set({ externalInvoiceId: outbound.result.externalInvoiceId })
+            .where({ ID: payload.invoiceId });
+        }
+        return outbound;
+      }
+      default:
+        httpError(
+          400,
+          `Integration message type ${message.messageType} cannot be retried`,
+        );
+    }
+  }
+
+  private async dispatchSupplierSend(
+    purchaseOrder: PurchaseOrderRow,
+    payload: SendPurchaseOrderPayload,
+  ) {
+    const outbound = await runOutbound<SupplierOrderResponse>({
+      messageType: MESSAGE_TYPES.SEND_PURCHASE_ORDER_SUPPLIER,
+      destinationSystem: "SUPPLIER",
+      businessEntityType: "PurchaseOrder",
+      businessEntityId: purchaseOrder.ID,
+      payload,
+      send: () => sendSupplierOrder(payload),
+    });
+
+    if (outbound.status === "SUCCESS") {
+      await this.applySupplierSendSuccess(purchaseOrder.ID, outbound.result);
+    }
+
+    return callResult(
+      outbound.messageId,
+      outbound.status,
+      outbound.result?.externalOrderId ?? "",
+      outbound.errorMessage ?? "",
+    );
+  }
+
+  private async dispatchErpSend(
+    purchaseOrder: PurchaseOrderRow,
+    payload: SendPurchaseOrderPayload,
+  ) {
+    const outbound = await runOutbound<ErpPurchaseOrderResponse>({
+      messageType: MESSAGE_TYPES.SEND_PURCHASE_ORDER_ERP,
+      destinationSystem: "ERP",
+      businessEntityType: "PurchaseOrder",
+      businessEntityId: purchaseOrder.ID,
+      payload,
+      send: () => sendErpPurchaseOrder(payload),
+    });
+
+    return callResult(
+      outbound.messageId,
+      outbound.status,
+      outbound.result?.erpPurchaseOrderId ?? "",
+      outbound.errorMessage ?? "",
+    );
+  }
+
+  private async applySupplierSendSuccess(
+    purchaseOrderId: string,
+    result?: SupplierOrderResponse,
+  ) {
+    await UPDATE(this.entities.PurchaseOrders)
+      .set({
+        status: "SENT",
+        externalOrderId: result?.externalOrderId,
+        sentAt: new Date().toISOString(),
+      })
+      .where({ ID: purchaseOrderId });
+  }
+
+  private async sendPayload(
+    purchaseOrder: PurchaseOrderRow,
+  ): Promise<SendPurchaseOrderPayload> {
+    const { PurchaseOrderItems, Suppliers } = this.entities;
+    const supplier = (await SELECT.one
+      .from(Suppliers)
+      .where({ ID: purchaseOrder.supplier_ID })) as SupplierRow | null;
+
+    if (!supplier) {
+      httpError(404, "Supplier not found");
+    }
+
+    const items = (await SELECT.from(PurchaseOrderItems).where({
+      purchaseOrder_ID: purchaseOrder.ID,
+    })) as PurchaseOrderItemRow[];
+
+    if (!items.length) {
+      httpError(400, "A purchase order cannot be sent without items");
+    }
+
+    const payloadItems: OrderItemPayload[] = items.map((item) => ({
+      description: item.description,
+      quantity: Number(item.quantity),
+      unitPrice: Number(item.unitPrice),
+    }));
+
+    return {
+      purchaseOrderId: purchaseOrder.ID,
+      purchaseOrderNumber: purchaseOrder.purchaseOrderNumber,
+      supplierId: supplier.supplierNumber,
+      items: payloadItems,
+    };
+  }
+
+  private async loadPurchaseOrder(ID: string): Promise<PurchaseOrderRow> {
+    const purchaseOrder = (await SELECT.one
+      .from(this.entities.PurchaseOrders)
+      .where({ ID })) as PurchaseOrderRow | null;
+
+    if (!purchaseOrder) {
+      httpError(404, "Purchase order not found");
+    }
+
+    return purchaseOrder;
+  }
+
   private async nextPurchaseOrderNumber(
     PurchaseOrders: unknown,
   ): Promise<string> {
-    const year = new Date().getFullYear();
-    const prefix = `PO-${year}-`;
-    const last = (await SELECT.one
-      .from(PurchaseOrders as string)
-      .columns("purchaseOrderNumber")
-      .where({ purchaseOrderNumber: { like: `${prefix}%` } })
-      .orderBy("purchaseOrderNumber desc")) as {
-      purchaseOrderNumber?: string;
-    } | null;
+    return this.nextDocumentNumber(
+      PurchaseOrders,
+      "purchaseOrderNumber",
+      `PO-${new Date().getFullYear()}-`,
+    );
+  }
 
-    return nextNumber(prefix, last?.purchaseOrderNumber);
+  private async nextDocumentNumber(
+    entity: unknown,
+    column: string,
+    prefix: string,
+  ): Promise<string> {
+    const last = (await SELECT.one
+      .from(entity as string)
+      .columns(column)
+      .where({ [column]: { like: `${prefix}%` } })
+      .orderBy(`${column} desc`)) as Record<string, string> | null;
+
+    return nextNumber(prefix, last?.[column]);
   }
 
   private async findApprover(

@@ -31,6 +31,61 @@ service ProcurementService {
     currency            : String(3);
   }
 
+  type IntegrationCallResult {
+    messageId    : String;
+    status       : String;
+    externalId   : String;
+    errorMessage : String;
+    skipped      : Boolean;
+  }
+
+  type SendPurchaseOrderResponse {
+    ID                  : UUID;
+    purchaseOrderNumber : String(32);
+    status              : String;
+    externalOrderId     : String;
+    supplier            : IntegrationCallResult;
+    erp                 : IntegrationCallResult;
+  }
+
+  type ConfirmPurchaseOrderResponse {
+    ID                  : UUID;
+    purchaseOrderNumber : String(32);
+    status              : String;
+    externalOrderId     : String;
+    confirmedAt         : Timestamp;
+    integration         : IntegrationCallResult;
+  }
+
+  type ReceiveGoodsResponse {
+    ID                  : UUID;
+    purchaseOrderNumber : String(32);
+    status              : String;
+    goodsReceiptNumber  : String;
+    quantityReceived    : Integer;
+    integration         : IntegrationCallResult;
+  }
+
+  type ReceiveInvoiceResponse {
+    ID                : UUID;
+    invoiceNumber     : String;
+    purchaseOrderID   : UUID;
+    status            : String;
+    amount            : Decimal(15, 2);
+    externalInvoiceId : String;
+    integration       : IntegrationCallResult;
+  }
+
+  type RetryIntegrationMessageResponse {
+    ID              : UUID;
+    messageId       : String;
+    messageType     : String;
+    status          : String;
+    attempts        : Integer;
+    errorMessage    : String;
+    responsePayload : String;
+  }
+
   entity Departments           as projection on db.Departments;
   entity Employees             as projection on db.Employees;
   entity Suppliers             as projection on db.Suppliers;
@@ -44,9 +99,19 @@ service ProcurementService {
 
   entity PurchaseRequestItems  as projection on db.PurchaseRequestItems;
   entity Approvals             as projection on db.Approvals;
-  entity PurchaseOrders        as projection on db.PurchaseOrders;
+
+  entity PurchaseOrders        as projection on db.PurchaseOrders actions {
+    action sendPurchaseOrder() returns SendPurchaseOrderResponse;
+    action confirmPurchaseOrder() returns ConfirmPurchaseOrderResponse;
+    action receiveGoods(quantityReceived : Integer, notes : String) returns ReceiveGoodsResponse;
+    action receiveInvoice() returns ReceiveInvoiceResponse;
+  };
+
   entity PurchaseOrderItems    as projection on db.PurchaseOrderItems;
   entity GoodsReceipts         as projection on db.GoodsReceipts;
   entity Invoices              as projection on db.Invoices;
-  entity IntegrationMessages   as projection on db.IntegrationMessages;
+
+  entity IntegrationMessages   as projection on db.IntegrationMessages actions {
+    action retryIntegrationMessage() returns RetryIntegrationMessageResponse;
+  };
 }
