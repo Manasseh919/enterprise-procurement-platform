@@ -23,6 +23,26 @@ annotate ProcurementService.PurchaseRequests with @(
   ],
 
   UI.LineItem : [
+    {
+      $Type  : 'UI.DataFieldForAction',
+      Label  : 'Submit',
+      Action : 'ProcurementService.submitPurchaseRequest'
+    },
+    {
+      $Type  : 'UI.DataFieldForAction',
+      Label  : 'Approve',
+      Action : 'ProcurementService.approvePurchaseRequest'
+    },
+    {
+      $Type  : 'UI.DataFieldForAction',
+      Label  : 'Reject',
+      Action : 'ProcurementService.rejectPurchaseRequest'
+    },
+    {
+      $Type  : 'UI.DataFieldForAction',
+      Label  : 'Create Purchase Order',
+      Action : 'ProcurementService.createPurchaseOrder'
+    },
     { $Type: 'UI.DataField', Value: requestNumber, Label: 'Request Number' },
     { $Type: 'UI.DataField', Value: title, Label: 'Title' },
     { $Type: 'UI.DataField', Value: status, Label: 'Status' },
@@ -30,6 +50,53 @@ annotate ProcurementService.PurchaseRequests with @(
     { $Type: 'UI.DataField', Value: requester.email, Label: 'Requester' },
     { $Type: 'UI.DataField', Value: totalAmount, Label: 'Total Amount' },
     { $Type: 'UI.DataField', Value: currency, Label: 'Currency' }
+  ],
+
+  UI.Identification : [
+    {
+      $Type       : 'UI.DataFieldForAction',
+      Label       : 'Submit',
+      Action      : 'ProcurementService.submitPurchaseRequest',
+      Determining : true,
+      ![@UI.Hidden] : {
+        $edmJson : {
+          $Ne : [ { $Path : 'status' }, { $String : 'DRAFT' } ]
+        }
+      }
+    },
+    {
+      $Type       : 'UI.DataFieldForAction',
+      Label       : 'Approve',
+      Action      : 'ProcurementService.approvePurchaseRequest',
+      Determining : true,
+      ![@UI.Hidden] : {
+        $edmJson : {
+          $Ne : [ { $Path : 'status' }, { $String : 'PENDING_APPROVAL' } ]
+        }
+      }
+    },
+    {
+      $Type       : 'UI.DataFieldForAction',
+      Label       : 'Reject',
+      Action      : 'ProcurementService.rejectPurchaseRequest',
+      Determining : true,
+      ![@UI.Hidden] : {
+        $edmJson : {
+          $Ne : [ { $Path : 'status' }, { $String : 'PENDING_APPROVAL' } ]
+        }
+      }
+    },
+    {
+      $Type       : 'UI.DataFieldForAction',
+      Label       : 'Create Purchase Order',
+      Action      : 'ProcurementService.createPurchaseOrder',
+      Determining : true,
+      ![@UI.Hidden] : {
+        $edmJson : {
+          $Ne : [ { $Path : 'status' }, { $String : 'APPROVED' } ]
+        }
+      }
+    }
   ],
 
   UI.PresentationVariant : {
@@ -163,6 +230,64 @@ annotate ProcurementService.PurchaseRequests with {
   );
 };
 
+annotate ProcurementService.PurchaseRequests actions {
+  submitPurchaseRequest @(
+    Common.SideEffects : {
+      TargetProperties : [ 'status', 'totalAmount', 'submittedAt' ],
+      TargetEntities   : [ approvals ]
+    }
+  );
+
+  approvePurchaseRequest @(
+    Common.SideEffects : {
+      TargetProperties : [ 'status', 'approvedAt' ],
+      TargetEntities   : [ approvals ]
+    }
+  );
+
+  rejectPurchaseRequest @(
+    Common.SideEffects : {
+      TargetProperties : [ 'status', 'rejectedAt' ],
+      TargetEntities   : [ approvals ]
+    }
+  );
+
+  rejectPurchaseRequest(comment) @(
+    title     : 'Rejection comment',
+    mandatory : true
+  );
+
+  createPurchaseOrder @(
+    Common.SideEffects : {
+      TargetProperties : [ 'status' ]
+    }
+  );
+
+  createPurchaseOrder(supplier_ID) @(
+    title : 'Supplier',
+    Common.ValueList : {
+      $Type : 'Common.ValueListType',
+      Label : 'Supplier',
+      CollectionPath : 'Suppliers',
+      Parameters : [
+        {
+          $Type : 'Common.ValueListParameterInOut',
+          LocalDataProperty : supplier_ID,
+          ValueListProperty : 'ID'
+        },
+        {
+          $Type : 'Common.ValueListParameterDisplayOnly',
+          ValueListProperty : 'supplierNumber'
+        },
+        {
+          $Type : 'Common.ValueListParameterDisplayOnly',
+          ValueListProperty : 'name'
+        }
+      ]
+    }
+  );
+};
+
 annotate ProcurementService.PurchaseRequestItems with @(
   UI.LineItem : [
     { $Type: 'UI.DataField', Value: description, Label: 'Description' },
@@ -201,4 +326,10 @@ annotate ProcurementService.Departments with {
 
 annotate ProcurementService.Employees with {
   ID @UI.Hidden;
+};
+
+annotate ProcurementService.Suppliers with {
+  ID             @title: 'Supplier';
+  supplierNumber @title: 'Supplier Number';
+  name           @title: 'Name';
 };
