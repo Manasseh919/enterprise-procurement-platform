@@ -17,7 +17,8 @@
   "scripts": {
     "start": "cds-serve",
     "watch:pg": "cds watch --profile pg",
-    "deploy:pg": "cds deploy --profile pg"
+    "deploy:pg": "cds deploy --profile pg",
+    "postinstall": "mkdir -p node_modules/@types && ln -sfn ../@cap-js/cds-types node_modules/@types/sap__cds"
   },
   "cds": {
     "requires": {

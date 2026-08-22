@@ -1,0 +1,220 @@
+{
+  "info": {
+    "name": "Enterprise Procurement — CAP OData",
+    "description": "Local tests for ProcurementService at /odata/v4/procurement. Select the CAP Local environment. Start the server with: cds watch --profile pg",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4004"
+    }
+  ],
+  "item": [
+    {
+      "name": "Metadata",
+      "item": [
+        {
+          "name": "Service document",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/odata/v4/procurement"
+          }
+        },
+        {
+          "name": "Metadata",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/xml"
+              }
+            ],
+            "url": "{{baseUrl}}/odata/v4/procurement/$metadata"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Read",
+      "item": [
+        {
+          "name": "List Departments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/odata/v4/procurement/Departments"
+          }
+        },
+        {
+          "name": "List Employees",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/odata/v4/procurement/Employees?$expand=department"
+          }
+        },
+        {
+          "name": "List Suppliers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/odata/v4/procurement/Suppliers"
+          }
+        },
+        {
+          "name": "List Purchase Requests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests?$expand=items,requester,approvals"
+          }
+        },
+        {
+          "name": "Get draft PR-2026-000001",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{draftRequestId}})?$expand=items,approvals"
+          }
+        },
+        {
+          "name": "List Purchase Orders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseOrders?$expand=items,supplier"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Submit workflow",
+      "item": [
+        {
+          "name": "Submit draft PR-2026-000001",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{draftRequestId}})/submitPurchaseRequest",
+            "description": "Expected 200. status PENDING_APPROVAL, approverEmail clara.boateng@helix.example, totalAmount 80."
+          }
+        },
+        {
+          "name": "Submit same request again (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{draftRequestId}})/submitPurchaseRequest",
+            "description": "Expected 400. Already PENDING_APPROVAL after the previous request."
+          }
+        },
+        {
+          "name": "Submit approved request (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{approvedRequestId}})/submitPurchaseRequest",
+            "description": "Expected 400. PR-2026-000003 is APPROVED."
+          }
+        },
+        {
+          "name": "Submit rejected request (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{rejectedRequestId}})/submitPurchaseRequest",
+            "description": "Expected 400. PR-2026-000004 is REJECTED."
+          }
+        },
+        {
+          "name": "Create empty purchase request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.ID) {",
+                  "  pm.environment.set('emptyRequestId', json.ID);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestNumber\": \"PR-2026-009999\",\n  \"title\": \"Empty request for validation\"\n}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests",
+            "description": "Creates a draft with no items. Saves ID into emptyRequestId."
+          }
+        },
+        {
+          "name": "Submit empty request (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/odata/v4/procurement/PurchaseRequests({{emptyRequestId}})/submitPurchaseRequest",
+            "description": "Run after Create empty purchase request. Expected 400: cannot submit without items."
+          }
+        }
+      ]
+    }
+  ]
+}
