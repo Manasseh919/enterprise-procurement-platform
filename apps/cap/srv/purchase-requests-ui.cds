@@ -252,38 +252,9 @@ annotate ProcurementService.PurchaseRequests actions {
     }
   );
 
-  rejectPurchaseRequest(comment) @(
-    title     : 'Rejection comment',
-    mandatory : true
-  );
-
   createPurchaseOrder @(
     Common.SideEffects : {
       TargetProperties : [ 'status' ]
-    }
-  );
-
-  createPurchaseOrder(supplier_ID) @(
-    title : 'Supplier',
-    Common.ValueList : {
-      $Type : 'Common.ValueListType',
-      Label : 'Supplier',
-      CollectionPath : 'Suppliers',
-      Parameters : [
-        {
-          $Type : 'Common.ValueListParameterInOut',
-          LocalDataProperty : supplier_ID,
-          ValueListProperty : 'ID'
-        },
-        {
-          $Type : 'Common.ValueListParameterDisplayOnly',
-          ValueListProperty : 'supplierNumber'
-        },
-        {
-          $Type : 'Common.ValueListParameterDisplayOnly',
-          ValueListProperty : 'name'
-        }
-      ]
     }
   );
 };
@@ -299,9 +270,8 @@ annotate ProcurementService.PurchaseRequestItems with @(
 );
 
 annotate ProcurementService.PurchaseRequestItems with {
-  ID                 @UI.Hidden;
-  purchaseRequest    @UI.Hidden;
-  purchaseRequest_ID @UI.Hidden;
+  ID              @UI.Hidden;
+  purchaseRequest @UI.Hidden;
 };
 
 annotate ProcurementService.Approvals with @(
@@ -315,9 +285,8 @@ annotate ProcurementService.Approvals with @(
 );
 
 annotate ProcurementService.Approvals with {
-  ID                 @UI.Hidden;
-  purchaseRequest    @UI.Hidden;
-  purchaseRequest_ID @UI.Hidden;
+  ID              @UI.Hidden;
+  purchaseRequest @UI.Hidden;
 };
 
 annotate ProcurementService.Departments with {

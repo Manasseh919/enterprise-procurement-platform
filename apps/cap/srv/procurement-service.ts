@@ -108,36 +108,79 @@ function idFromUnknown(value: unknown): string | undefined {
 }
 
 function idFromUrl(
-  url: string | undefined,
-  entityName: string,
-): string | undefined {
-  if (!url) return;
-  const match = decodeURIComponent(url).match(
-    new RegExp(
-      `${entityName}\\((?:ID=)?(?:"|')?([0-9a-fA-F-]{36})`,
-      "i",
-    ),
-  );
-  return match?.[1];
-}
+    url: string | undefined,
+    entityName: string,
+  ): string | undefined {
+    if (!url) return;
+    const match = decodeURIComponent(url).match(
+      new RegExp(
+        `${entityName}\\((?:ID=)?(?:guid)?(?:"|')?([0-9a-fA-F-]{36})`,
+        "i",
+      ),
+    );
+    return match?.[1];
+  }
+  
 
-function boundId(req: Request, entityName = "PurchaseRequests"): string {
-  const fromParams = idFromUnknown(
-    Array.isArray(req.params) ? req.params[0] : req.params,
-  );
-  if (fromParams) return fromParams;
+  function idFromSubject(subject: unknown): string | undefined {
+    if (!subject || typeof subject !== "object") return;
+    const ref = (subject as { ref?: unknown[] }).ref;
+    if (!Array.isArray(ref)) return;
+    for (const part of ref) {
+      if (!part || typeof part !== "object") continue;
+      const direct = idFromUnknown(part);
+      if (direct) return direct;
+      const where = (part as { where?: unknown[] }).where;
+      if (!Array.isArray(where)) continue;
+      for (let i = 0; i < where.length; i++) {
+        const token = where[i] as { ref?: string[]; val?: unknown };
+        const next = where[i + 2] as { val?: unknown } | undefined;
+        if (token?.ref?.[0] === "ID") {
+          const value = idFromUnknown(next?.val ?? next);
+          if (value) return value;
+        }
+        if (
+          typeof token?.val === "string" &&
+          /^[0-9a-fA-F-]{36}$/i.test(token.val)
+        ) {
+          return token.val;
+        }
+      }
+    }
+  }
 
-  const httpReq = cds.context?.http?.req as
-    | { originalUrl?: string; url?: string }
-    | undefined;
-  const fromUrl = idFromUrl(
-    httpReq?.originalUrl || httpReq?.url,
-    entityName,
-  );
-  if (fromUrl) return fromUrl;
-
-  httpError(400, `${entityName} ID is required`);
-}
+  function boundId(req: Request, entityName = "PurchaseRequests"): string {
+    const fromParams = idFromUnknown(
+      Array.isArray(req.params) ? req.params[0] : req.params,
+    );
+    if (fromParams) return fromParams;
+    const fromSubject = idFromSubject(req.subject);
+    if (fromSubject) return fromSubject;
+    const innerReq = (
+      req as unknown as {
+        _?: { req?: { originalUrl?: string; url?: string } };
+      }
+    )._?.req;
+    const httpReq = cds.context?.http?.req as
+      | { originalUrl?: string; url?: string; body?: unknown }
+      | undefined;
+    const fromInner = idFromUrl(
+      innerReq?.originalUrl || innerReq?.url,
+      entityName,
+    );
+    if (fromInner) return fromInner;
+    const fromUrl = idFromUrl(httpReq?.originalUrl || httpReq?.url, entityName);
+    if (fromUrl) return fromUrl;
+    const batchBody =
+      typeof httpReq?.body === "string"
+        ? httpReq.body
+        : httpReq?.body
+          ? JSON.stringify(httpReq.body)
+          : "";
+    const fromBatch = idFromUrl(batchBody, entityName);
+    if (fromBatch) return fromBatch;
+    httpError(400, `${entityName} ID is required`);
+  }
 
 function isAnonymous(req: Request): boolean {
     const user = req.user as
@@ -273,17 +316,54 @@ function nextNumber(prefix: string, lastNumber?: string): string {
   return `${prefix}${String(sequence).padStart(6, "0")}`;
 }
 
-function actionParam(req: Request, names: string[]): string {
-  const data = (req.data ?? {}) as Record<string, unknown>;
-  const body =
-    (cds.context?.http?.req as { body?: Record<string, unknown> } | undefined)
-      ?.body ?? {};
-  for (const name of names) {
-    const value = data[name] ?? body[name];
-    if (value != null && String(value).trim()) return String(value).trim();
+function valueToParam(value: unknown): string {
+    if (value == null) return "";
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      const uuid = trimmed.match(
+        /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/,
+      );
+      return uuid?.[0] ?? trimmed;
+    }
+    if (typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      return (
+        valueToParam(obj.ID) ||
+        valueToParam(obj.id) ||
+        valueToParam(obj.value) ||
+        valueToParam(obj["@odata.id"]) ||
+        valueToParam(obj["@odata.bind"])
+      );
+    }
+    return String(value).trim();
   }
-  return "";
-}
+  function actionParam(req: Request, names: string[]): string {
+    const sources: Record<string, unknown>[] = [];
+    const data = (req.data ?? {}) as Record<string, unknown>;
+    sources.push(data);
+    const innerBody = (
+      req as unknown as { _?: { req?: { body?: unknown } } }
+    )._?.req?.body;
+    if (innerBody && typeof innerBody === "object" && !Array.isArray(innerBody)) {
+      sources.push(innerBody as Record<string, unknown>);
+    }
+    const httpBody = (
+      cds.context?.http?.req as { body?: unknown } | undefined
+    )?.body;
+    if (httpBody && typeof httpBody === "object" && !Array.isArray(httpBody)) {
+      sources.push(httpBody as Record<string, unknown>);
+    }
+    for (const source of sources) {
+      for (const name of names) {
+        const keys = [name, `${name}@odata.bind`, `${name}@odata.id`];
+        for (const key of keys) {
+          const extracted = valueToParam(source[key]);
+          if (extracted) return extracted;
+        }
+      }
+    }
+    return "";
+  }
 
 function callResult(
   messageId: string,
@@ -464,9 +544,7 @@ export default class ProcurementService extends cds.ApplicationService {
 
     const { PurchaseRequests, Approvals } = this.entities;
     const ID = boundId(req);
-    const comment = String(
-      (req.data as { comment?: string } | undefined)?.comment ?? "",
-    ).trim();
+    const comment = actionParam(req, ["comment"]);
 
     if (decision === "REJECTED" && !comment) {
       httpError(400, "A rejection comment is required");

@@ -93,8 +93,34 @@ service ProcurementService {
   entity PurchaseRequests      as projection on db.PurchaseRequests actions {
     action submitPurchaseRequest() returns SubmitPurchaseRequestResponse;
     action approvePurchaseRequest() returns ApprovalDecisionResponse;
-    action rejectPurchaseRequest(comment : String) returns ApprovalDecisionResponse;
-    action createPurchaseOrder(supplier_ID : UUID) returns CreatePurchaseOrderResponse;
+    action rejectPurchaseRequest(
+      comment : String @title: 'Rejection comment' @mandatory
+    ) returns ApprovalDecisionResponse;
+    action createPurchaseOrder(
+      supplier_ID : UUID @(
+        title : 'Supplier',
+        Common.ValueList : {
+          $Type : 'Common.ValueListType',
+          Label : 'Supplier',
+          CollectionPath : 'Suppliers',
+          Parameters : [
+            {
+              $Type : 'Common.ValueListParameterInOut',
+              LocalDataProperty : supplier_ID,
+              ValueListProperty : 'ID'
+            },
+            {
+              $Type : 'Common.ValueListParameterDisplayOnly',
+              ValueListProperty : 'supplierNumber'
+            },
+            {
+              $Type : 'Common.ValueListParameterDisplayOnly',
+              ValueListProperty : 'name'
+            }
+          ]
+        }
+      )
+    ) returns CreatePurchaseOrderResponse;
   };
 
   entity PurchaseRequestItems  as projection on db.PurchaseRequestItems;
