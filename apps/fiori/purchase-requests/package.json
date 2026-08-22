@@ -1,0 +1,7 @@
+{
+    "name": "purchase-requests",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Fiori Elements app for purchase requests",
+    "sapux": true
+  }

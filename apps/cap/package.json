@@ -21,6 +21,9 @@
     "postinstall": "mkdir -p node_modules/@types && ln -sfn ../@cap-js/cds-types node_modules/@types/sap__cds"
   },
   "cds": {
+    "folders": {
+      "app": "../fiori"
+    },
     "requires": {
       "db": {
         "[pg]": {
