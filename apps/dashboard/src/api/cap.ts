@@ -25,11 +25,24 @@ export type IntegrationMessage = {
   sourceSystem: string;
   destinationSystem: string;
   businessEntityType?: string;
+  businessEntityId?: string;
   status: string;
   attempts: number;
+  payload?: string | null;
+  responsePayload?: string | null;
   errorMessage?: string | null;
   createdAt?: string;
   processedAt?: string | null;
+};
+
+export type RetryIntegrationMessageResponse = {
+  ID: string;
+  messageId: string;
+  messageType: string;
+  status: string;
+  attempts: number;
+  errorMessage?: string;
+  responsePayload?: string;
 };
 
 export const PURCHASE_ORDER_STATUSES = [
@@ -42,20 +55,45 @@ export const PURCHASE_ORDER_STATUSES = [
   "CANCELLED",
 ] as const;
 
+export const INTEGRATION_STATUSES = [
+  "PENDING",
+  "PROCESSING",
+  "SUCCESS",
+  "FAILED",
+  "RETRYING",
+] as const;
+
 export type PurchaseOrderStatus = (typeof PURCHASE_ORDER_STATUSES)[number];
+
+export type IntegrationMessageFilters = {
+  status?: string;
+  destinationSystem?: string;
+  search?: string;
+};
 
 type ODataList<T> = {
   value: T[];
   "@odata.count"?: number;
 };
 
-async function getJson<T>(path: string): Promise<T> {
+async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
-    headers: { Accept: "application/json" },
+    ...init,
+    headers: {
+      Accept: "application/json",
+      ...(init?.headers ?? {}),
+    },
   });
 
   if (!response.ok) {
-    throw new Error(`CAP request failed (${response.status}) for ${path}`);
+    const detail = await response.text();
+    throw new Error(
+      `CAP request failed (${response.status}) for ${path}${detail ? `: ${detail}` : ""}`,
+    );
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   return response.json() as Promise<T>;
@@ -89,7 +127,9 @@ export async function getPurchaseOrders(top = 10) {
 
 function startOfCurrentMonthIso(): string {
   const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+  ).toISOString();
 }
 
 export type DashboardSnapshot = {
@@ -183,4 +223,68 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
     },
     recentFailures: failures.value,
   };
+}
+
+function integrationFilter(filters: IntegrationMessageFilters): string {
+  const parts: string[] = [];
+
+  if (filters.status) {
+    parts.push(`status eq '${filters.status.replaceAll("'", "''")}'`);
+  }
+  if (filters.destinationSystem) {
+    parts.push(
+      `destinationSystem eq '${filters.destinationSystem.replaceAll("'", "''")}'`,
+    );
+  }
+  if (filters.search?.trim()) {
+    const term = filters.search.trim().replaceAll("'", "''");
+    parts.push(
+      `(contains(messageId,'${term}') or contains(messageType,'${term}') or contains(errorMessage,'${term}'))`,
+    );
+  }
+
+  return parts.join(" and ");
+}
+
+const MESSAGE_SELECT =
+  "ID,messageId,messageType,sourceSystem,destinationSystem,businessEntityType,businessEntityId,status,attempts,payload,responsePayload,errorMessage,createdAt,processedAt";
+
+export async function getIntegrationMessages(
+  filters: IntegrationMessageFilters = {},
+) {
+  const filter = integrationFilter(filters);
+  const query = [
+    "$count=true",
+    `$select=${MESSAGE_SELECT}`,
+    "$orderby=createdAt desc",
+    "$top=100",
+    filter ? `$filter=${encodeURIComponent(filter)}` : "",
+  ]
+    .filter(Boolean)
+    .join("&");
+
+  return getJson<ODataList<IntegrationMessage>>(
+    `/odata/v4/procurement/IntegrationMessages?${query}`,
+  );
+}
+
+export async function getIntegrationMessage(id: string) {
+  return getJson<IntegrationMessage>(
+    `/odata/v4/procurement/IntegrationMessages(${id})?$select=${MESSAGE_SELECT}`,
+  );
+}
+
+export async function retryIntegrationMessage(id: string) {
+  return getJson<RetryIntegrationMessageResponse>(
+    `/odata/v4/procurement/IntegrationMessages(${id})/retryIntegrationMessage`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    },
+  );
+}
+
+export function canRetry(status: string): boolean {
+  return status === "FAILED" || status === "RETRYING";
 }

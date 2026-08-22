@@ -17,6 +17,26 @@
     text-decoration: none;
   }
   
+  button,
+  select,
+  input {
+    font: inherit;
+  }
+  
+  button {
+    background: #111827;
+    color: #fff;
+    border: 0;
+    border-radius: 6px;
+    padding: 0.45rem 0.8rem;
+    cursor: pointer;
+  }
+  
+  button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  
   .layout {
     min-height: 100vh;
   }
@@ -72,6 +92,22 @@
     text-align: left;
     padding: 0.6rem 0.75rem;
     border-bottom: 1px solid #e5e7eb;
+    font-size: 0.85rem;
+  }
+  
+  tr.selected {
+    background: #e5e7eb;
+  }
+  
+  tbody tr {
+    cursor: pointer;
+  }
+  
+  .table-wrap {
+    overflow: auto;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
   }
   
   .kpi-grid,
@@ -86,7 +122,7 @@
   }
   
   .split {
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: minmax(0, 1.4fr) minmax(16rem, 0.8fr);
   }
   
   .card {
@@ -96,7 +132,8 @@
     padding: 1rem 1.1rem;
   }
   
-  .card h2 {
+  .card h2,
+  .card h3 {
     margin: 0 0 0.5rem;
     font-size: 0.9rem;
     font-weight: 600;
@@ -147,4 +184,62 @@
   
   .health-list li {
     margin: 0.25rem 0;
+  }
+  
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: end;
+    margin: 1rem 0;
+  }
+  
+  .filters label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.8rem;
+    color: #6b7280;
+  }
+  
+  .filters .grow {
+    flex: 1 1 12rem;
+  }
+  
+  .filters input,
+  .filters select {
+    min-width: 9rem;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: #fff;
+    color: #111827;
+  }
+  
+  .details {
+    margin: 0 0 1rem;
+  }
+  
+  .details div {
+    margin: 0.4rem 0;
+  }
+  
+  .details dt {
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+  
+  .details dd {
+    margin: 0.1rem 0 0;
+  }
+  
+  pre {
+    margin: 0 0 1rem;
+    padding: 0.75rem;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    overflow: auto;
+    max-height: 12rem;
+    font-size: 0.75rem;
   }
