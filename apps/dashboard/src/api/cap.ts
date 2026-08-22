@@ -15,7 +15,34 @@ export type PurchaseOrder = {
   status: string;
   totalAmount: number;
   currency: string;
+  createdAt?: string;
 };
+
+export type IntegrationMessage = {
+  ID: string;
+  messageId: string;
+  messageType: string;
+  sourceSystem: string;
+  destinationSystem: string;
+  businessEntityType?: string;
+  status: string;
+  attempts: number;
+  errorMessage?: string | null;
+  createdAt?: string;
+  processedAt?: string | null;
+};
+
+export const PURCHASE_ORDER_STATUSES = [
+  "DRAFT",
+  "CREATED",
+  "SENT",
+  "CONFIRMED",
+  "PARTIALLY_RECEIVED",
+  "RECEIVED",
+  "CANCELLED",
+] as const;
+
+export type PurchaseOrderStatus = (typeof PURCHASE_ORDER_STATUSES)[number];
 
 type ODataList<T> = {
   value: T[];
@@ -34,6 +61,20 @@ async function getJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function getCount(entity: string, filter?: string): Promise<number> {
+  const query = filter ? `?$filter=${encodeURIComponent(filter)}` : "";
+  const response = await fetch(
+    `${baseUrl}/odata/v4/procurement/${entity}/$count${query}`,
+    { headers: { Accept: "text/plain" } },
+  );
+
+  if (!response.ok) {
+    throw new Error(`CAP count failed (${response.status}) for ${entity}`);
+  }
+
+  return Number(await response.text());
+}
+
 export async function getPurchaseRequests(top = 10) {
   return getJson<ODataList<PurchaseRequest>>(
     `/odata/v4/procurement/PurchaseRequests?$count=true&$top=${top}&$select=ID,requestNumber,title,status,totalAmount,currency&$orderby=requestNumber desc`,
@@ -44,4 +85,102 @@ export async function getPurchaseOrders(top = 10) {
   return getJson<ODataList<PurchaseOrder>>(
     `/odata/v4/procurement/PurchaseOrders?$count=true&$top=${top}&$select=ID,purchaseOrderNumber,status,totalAmount,currency&$orderby=purchaseOrderNumber desc`,
   );
+}
+
+function startOfCurrentMonthIso(): string {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+}
+
+export type DashboardSnapshot = {
+  totalPurchaseRequests: number;
+  pendingApprovals: number;
+  openPurchaseOrders: number;
+  monthlySpend: number;
+  monthlySpendCurrency: string;
+  ordersByStatus: Record<string, number>;
+  integration: {
+    total: number;
+    success: number;
+    failed: number;
+    retrying: number;
+    pending: number;
+  };
+  recentFailures: IntegrationMessage[];
+};
+
+export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
+  const monthStart = startOfCurrentMonthIso();
+
+  const [
+    totalPurchaseRequests,
+    pendingApprovals,
+    openPurchaseOrders,
+    orders,
+    monthlyOrders,
+    integrationTotal,
+    integrationSuccess,
+    integrationFailed,
+    integrationRetrying,
+    integrationPending,
+    failures,
+  ] = await Promise.all([
+    getCount("PurchaseRequests"),
+    getCount("PurchaseRequests", "status eq 'PENDING_APPROVAL'"),
+    getCount(
+      "PurchaseOrders",
+      "status ne 'RECEIVED' and status ne 'CANCELLED'",
+    ),
+    getJson<ODataList<PurchaseOrder>>(
+      `/odata/v4/procurement/PurchaseOrders?$select=status,totalAmount,currency,createdAt&$top=1000`,
+    ),
+    getJson<ODataList<PurchaseOrder>>(
+      `/odata/v4/procurement/PurchaseOrders?$filter=${encodeURIComponent(
+        `createdAt ge ${monthStart}`,
+      )}&$select=totalAmount,currency&$top=1000`,
+    ),
+    getCount("IntegrationMessages"),
+    getCount("IntegrationMessages", "status eq 'SUCCESS'"),
+    getCount("IntegrationMessages", "status eq 'FAILED'"),
+    getCount("IntegrationMessages", "status eq 'RETRYING'"),
+    getCount(
+      "IntegrationMessages",
+      "status eq 'PENDING' or status eq 'PROCESSING'",
+    ),
+    getJson<ODataList<IntegrationMessage>>(
+      `/odata/v4/procurement/IntegrationMessages?$filter=${encodeURIComponent(
+        "status eq 'FAILED'",
+      )}&$select=ID,messageId,messageType,sourceSystem,destinationSystem,businessEntityType,status,attempts,errorMessage,createdAt,processedAt&$orderby=createdAt desc&$top=5`,
+    ),
+  ]);
+
+  const ordersByStatus: Record<string, number> = {};
+  for (const status of PURCHASE_ORDER_STATUSES) {
+    ordersByStatus[status] = 0;
+  }
+  for (const order of orders.value) {
+    ordersByStatus[order.status] = (ordersByStatus[order.status] ?? 0) + 1;
+  }
+
+  const monthlySpend = monthlyOrders.value.reduce(
+    (sum, order) => sum + Number(order.totalAmount || 0),
+    0,
+  );
+
+  return {
+    totalPurchaseRequests,
+    pendingApprovals,
+    openPurchaseOrders,
+    monthlySpend,
+    monthlySpendCurrency: monthlyOrders.value[0]?.currency ?? "USD",
+    ordersByStatus,
+    integration: {
+      total: integrationTotal,
+      success: integrationSuccess,
+      failed: integrationFailed,
+      retrying: integrationRetrying,
+      pending: integrationPending,
+    },
+    recentFailures: failures.value,
+  };
 }
