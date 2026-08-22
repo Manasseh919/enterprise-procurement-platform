@@ -1,0 +1,104 @@
+openapi: 3.0.3
+info:
+  title: EPP Supplier Purchase Orders
+  version: 1.0.0
+  description: >
+    External purchase-order API protected by SAP API Management.
+    Backend is the Supplier simulator.
+servers:
+  - url: https://placeholder.apimanagement.example.com
+    description: API Management proxy (set this after you create the API)
+paths:
+  /api/v1/purchase-orders:
+    post:
+      operationId: createPurchaseOrder
+      summary: Create a supplier order
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePurchaseOrderRequest"
+            example:
+              purchaseOrderNumber: PO-2026-000001
+              supplierId: SUP-001
+              items:
+                - description: Laptop
+                  quantity: 2
+                  unitPrice: 1500
+      responses:
+        "201":
+          description: Order accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatePurchaseOrderResponse"
+        "400":
+          description: Invalid request
+        "401":
+          description: Missing or invalid API key
+        "429":
+          description: Rate limit exceeded
+  /api/v1/purchase-orders/{id}:
+    get:
+      operationId: getPurchaseOrder
+      summary: Get a supplier order
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: SUP-ORD-10001
+      responses:
+        "200":
+          description: Order found
+        "401":
+          description: Missing or invalid API key
+        "404":
+          description: Order not found
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: apikey
+  schemas:
+    OrderItem:
+      type: object
+      required: [description, quantity, unitPrice]
+      properties:
+        description:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitPrice:
+          type: number
+          exclusiveMinimum: 0
+    CreatePurchaseOrderRequest:
+      type: object
+      required: [purchaseOrderNumber, supplierId, items]
+      properties:
+        purchaseOrderNumber:
+          type: string
+        supplierId:
+          type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/OrderItem"
+    CreatePurchaseOrderResponse:
+      type: object
+      properties:
+        externalOrderId:
+          type: string
+          example: SUP-ORD-10001
+        status:
+          type: string
+          example: ACCEPTED

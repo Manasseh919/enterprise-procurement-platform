@@ -19,6 +19,11 @@ export class IntegrationError extends Error {
   }
 }
 
+export type IntegrationAuth = {
+  user?: string;
+  password?: string;
+  apiKey?: string;
+};
 function truncate(value: string, max = 1000): string {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
@@ -42,13 +47,27 @@ export async function postJson<T>(
   url: string,
   body: unknown,
   timeoutMs: number,
+  auth?: IntegrationAuth,
 ): Promise<T> {
   let response: Response;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  if (auth?.user && auth.password) {
+    headers.Authorization = `Basic ${Buffer.from(
+      `${auth.user}:${auth.password}`,
+    ).toString("base64")}`;
+  }
+  if (auth?.apiKey) {
+    headers.apikey = auth.apiKey;
+  }
 
   try {
     response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body ?? {}),
       signal: AbortSignal.timeout(timeoutMs),
     });

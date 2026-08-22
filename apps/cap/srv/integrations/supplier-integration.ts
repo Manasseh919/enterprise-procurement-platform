@@ -8,15 +8,27 @@ import type {
 export async function sendSupplierOrder(
   payload: SendPurchaseOrderPayload,
 ): Promise<SupplierOrderResponse> {
-  const { supplierBaseUrl, timeoutMs } = integrationConfig();
+  const {
+    supplierOrdersUrl,
+    supplierUser,
+    supplierPassword,
+    supplierApiKey,
+    timeoutMs,
+  } = integrationConfig();
+
   return postJson<SupplierOrderResponse>(
-    `${supplierBaseUrl}/api/orders`,
+    supplierOrdersUrl,
     {
       purchaseOrderNumber: payload.purchaseOrderNumber,
       supplierId: payload.supplierId,
       items: payload.items,
     },
     timeoutMs,
+    {
+      user: supplierUser,
+      password: supplierPassword,
+      apiKey: supplierApiKey,
+    },
   );
 }
 
