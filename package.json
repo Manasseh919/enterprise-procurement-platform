@@ -9,6 +9,7 @@
   "scripts": {
     "watch:cap": "npm --prefix apps/cap exec -- cds watch --profile pg",
     "deploy:cap": "npm --prefix apps/cap exec -- cds deploy --profile pg",
+    "dev:dashboard": "npm --prefix apps/dashboard run dev",
     "test": "echo \"No tests in Stage 8\" && exit 0"
   }
 }
